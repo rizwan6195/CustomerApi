@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:azure-cosmos-db-connector-mule-4="http://www.mulesoft.org/schema/mule/azure-cosmos-db-connector-mule-4"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/azure-cosmos-db-connector-mule-4 http://www.mulesoft.org/schema/mule/azure-cosmos-db-connector-mule-4/current/mule-azure-cosmos-db-connector-mule-4.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+	<db:config name="Database_Config" doc:name="Database Config" doc:id="081e3b81-c0e3-456e-8850-57ad2058c421" >
+		<db:generic-connection url="#[vars.config.connstring]" driverClassName="com.microsoft.sqlserver.jdbc.SQLServerDriver" user="#[vars.config.user]" password="#[vars.config.password]" />
+	</db:config>
+	<flow name="PostToCosmo" doc:id="13f66735-b17f-4f39-91a2-5306bd9a48eb" >
+		<ee:transform doc:name="Transform Message" doc:id="106114cc-866d-41ea-8cfc-e9bfa6d7d819">
+			<ee:message />
+			<ee:variables>
+				<ee:set-variable variableName="transformedjson"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  "customerId": uuid(),
+  "personalInformation": {
+    "firstName": payload.firstName,
+    "lastName": payload.lastName,
+    "companyName": payload.companyName,
+    "email": payload.email,
+    "phone": payload.phone
+  },
+   "address": [
+    {
+      "street": "Steinbrueckstrasse",
+      "houseNumber": 114,
+      "city": "Nuremberg",
+      "country": "Germany"
+    }
+  ]
+}]]></ee:set-variable>
+				<ee:set-variable variableName="config" ><![CDATA[%dw 2.0
+output application/json
+---
+read(p('azure'), "application/json")]]></ee:set-variable>
+				<ee:set-variable variableName="query" ><![CDATA[%dw 2.0
+output application/java
+---
+"INSERT INTO dbo.Customer (CID,LastName,FirstName,Company,Phone,Email,Street,HouseNum,City,Country)  
+VALUES (:cid,:lastname,:firstname,:company,:phone,:email,:street,:housenum,:city,:country)" 
+]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<try doc:name="Try" doc:id="b8f3afe0-4e89-41d6-ab2b-86910fa3b2d8" >
+			<db:insert doc:name="Insert" doc:id="fb510f99-2e8c-43ce-9377-c3523dd5b9aa" config-ref="Database_Config" queryTimeout="2" queryTimeoutUnit="MINUTES" target="insertedRecord">
+			<db:sql>#[vars.query]</db:sql>
+			<db:input-parameters><![CDATA[#[{
+	'cid':vars.transformedjson.customerId,
+	'lastname':vars.transformedjson.personalInformation.lastName,
+	'firstname':vars.transformedjson.personalInformation.firstName,
+	'company':vars.transformedjson.personalInformation.companyName,
+	'phone':vars.transformedjson.personalInformation.phone,
+	'email':vars.transformedjson.personalInformation.email,
+	'street':vars.transformedjson.address[0].street,
+	'housenum':vars.transformedjson.address[0].houseNumber,
+	'city':vars.transformedjson.address[0].city,
+	'country':vars.transformedjson.address[0].country
+}]]]></db:input-parameters>
+		</db:insert>
+			<error-handler >
+				<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="6c621031-dff4-4aee-b5c2-b30e0cd012aa" type="ANY">
+					<set-payload value="#[error.description]" doc:name="Set Payload" doc:id="3d076d91-308f-4090-b522-9ea4378872f7" />
+					<raise-error doc:name="Raise error" doc:id="bd8a44ca-740f-4422-8c44-a0ff1ccbb268" type="ANY" description="Db Failure. Contact admin"/>
+				</on-error-propagate>
+			</error-handler>
+		</try>
+		<set-payload value="#[vars.transformedjson]" doc:name="Set Payload" doc:id="e688c8b9-140c-4158-ab76-59a4d518e24a" />
+		<logger level="INFO" doc:name="Logger" doc:id="bead751c-f05d-44da-bd90-92fab1f5e05b" message="record inserted successfuly to db with id #[vars.transformedjson.customerId]" />
+	</flow>
+	<flow name="getCustomer" doc:id="78f3cdf8-c1a5-4c6f-bac1-26479b991087" >
+		<set-variable value="#[attributes]" doc:name="Set Variable" doc:id="84b616d4-f87d-4943-b412-976299555ba3" variableName="requestattrib"/>
+		<ee:transform doc:name="Transform Message" doc:id="cdb9ae1b-d488-4470-aa77-4d8955b754bb">
+			<ee:message />
+			<ee:variables>
+				<ee:set-variable variableName="config"><![CDATA[%dw 2.0
+output application/json
+---
+read(p('azure'), "application/json")]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<try doc:name="Try" doc:id="6d7c80b5-94c0-495a-a08b-23928e30a441" >
+			<db:select doc:name="Select" doc:id="28ff4a54-dc15-46d5-98af-0a010ce28412" config-ref="Database_Config" queryTimeoutUnit="MINUTES" queryTimeout="2" target="result">
+			<db:sql>#[&quot;Select * from Customer where CID=:cid&quot;]</db:sql>
+			<db:input-parameters><![CDATA[#[{
+cid:vars.requestattrib.headers['customerId']
+}]]]></db:input-parameters>
+		</db:select>
+			<choice doc:name="Choice" doc:id="baa08a24-e7c7-4751-b303-c62231f5c7bc">
+			<when expression="#[sizeOf(vars.result) == 0]">
+				<logger level="INFO" doc:name="Logger" doc:id="de5da9af-d1b7-42ad-bccf-dccb360523b4" message="No record found against the Customer Id : #[vars.requestattrib.headers['customerId']]" />
+					<set-payload value="#[&quot;No Record found for this id : &quot; ++ vars.requestattrib.headers['customerId']]" doc:name="Set Payload" doc:id="5bc435e2-7be8-4671-9d4f-93ebeee07777" />
+			</when>
+			<otherwise>
+				<ee:transform doc:name="Transform Message" doc:id="337d9513-89d3-4ce1-a5f3-27f23d6c700b">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var sqlResult = vars.result[0]
+---
+{
+"customerId": sqlResult['CID'],
+  "personalInformation": {
+    "firstName": sqlResult['FirstName'],
+    "lastName": sqlResult['LastName'],
+    "companyName": sqlResult['Company'],
+    "email": sqlResult['Email'],
+    "phone": sqlResult['Phone']
+  },
+   "address": [
+    {
+      "street": sqlResult['Street'],
+      "houseNumber": sqlResult['HouseNum'],
+      "city": sqlResult['City'],
+      "country": sqlResult['Country']
+    }
+  ]
+}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+				<logger level="INFO" doc:name="Logger" doc:id="2dd567d5-711c-46b5-8e28-cdf102c932f5" message="#[payload]" />
+			</otherwise>
+		</choice>
+			<error-handler >
+				<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="27c2417d-7c5b-48a7-948e-4c815cfa66f3" type="DB:QUERY_EXECUTION">
+					<set-payload value="#[error.description]" doc:name="Set Payload" doc:id="31ff6fb0-a2b7-4499-83b6-74eaffa5ca82" />
+					<raise-error doc:name="Raise error" doc:id="d7930c95-f44d-45eb-a360-f59059acfa72" type="ANY" description="#[payload]"/>
+				</on-error-propagate>
+			</error-handler>
+		</try>
+	</flow>
+	<flow name="updateCustomer" doc:id="ebb5c545-708f-46cb-9b9f-dcbfc8df0bbb" >
+		<set-variable value="#[attributes]" doc:name="Set Variable" doc:id="6027f31c-7ce3-4a08-94f8-bd1ccaf9e791" variableName="requestattrib"/>
+		<ee:transform doc:name="Transform Message" doc:id="6cb2a9e6-9e23-4099-bc82-a608af5b46f3" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="config" ><![CDATA[%dw 2.0
+output application/json
+---
+read(p('azure'), "application/json")]]></ee:set-variable>
+				<ee:set-variable variableName="msg" ><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<try doc:name="Try" doc:id="d5df7870-c043-4afc-99ef-2254b31eb2ce" >
+			<db:update doc:name="Update" doc:id="77a178d0-6f41-46f8-a0ef-6a9f38c0d8b7" config-ref="Database_Config" queryTimeout="2" queryTimeoutUnit="MINUTES" target="result">
+				<db:sql >#[&quot;update customer set LastName=:lastname,FirstName=:firstname,Company=:company,Phone=:phone,Email=:email where CID=:cid&quot;]</db:sql>
+				<db:input-parameters ><![CDATA[#[{
+	cid:vars.requestattrib.headers['customerId'],
+	lastname:vars.msg['lastName'],
+	firstname:vars.msg['firstName'],
+	company:vars.msg['companyName'],
+	phone:vars.msg['phone'],
+	email:vars.msg['email'],
+}]]]></db:input-parameters>
+			</db:update>
+			<choice doc:name="Choice" doc:id="158c4be6-3170-44e1-8c68-0e81c6fca82c" >
+				<when expression="#[sizeOf(vars.result) == 0]" >
+					<logger level="INFO" doc:name="Logger" doc:id="49024f58-9668-465e-b4e0-42643e161adb" message="Invalid customer id , No record updated for  : #[vars.requestattrib.headers['customerId']]" />
+					<set-payload value="#[&quot;Invalid customer id , No record updated for  &quot; ++ vars.requestattrib.headers['customerId']]" doc:name="Set Payload" doc:id="8ef2cdaf-b046-400d-aabc-23a394bffe2e" />
+				</when>
+				<otherwise >
+					<flow-ref doc:name="Flow Reference" doc:id="85a72387-9260-4803-a0e9-cb9ae30d0b93" name="getCustomer"/>
+					<logger level="INFO" doc:name="Logger" doc:id="3fb4c158-d968-4724-ba40-a19366763c55" message="#[payload]" />
+				</otherwise>
+			</choice>
+			<error-handler >
+				<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="1c16d9fb-81ea-4f6d-98d0-152b15e9da60" type="DB:QUERY_EXECUTION" >
+					<set-payload value="#[error.description]" doc:name="Set Payload" doc:id="27ec3594-c93b-4320-b5f8-44c59620d2a2" />
+					<raise-error doc:name="Raise error" doc:id="b278d50a-25f6-47a7-949b-3ddf2f5949cc" type="ANY" description="#[payload]" />
+				</on-error-propagate>
+			</error-handler>
+		</try>
+	</flow>
+</mule>
